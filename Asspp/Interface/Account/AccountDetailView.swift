@@ -20,6 +20,16 @@ struct AccountDetailView: View {
     }
 
     @State private var rotatingHint = ""
+    @State private var exportMode: AccountPortabilityMode?
+    @State private var shareError: String?
+
+    private func shareBackupFile(_ url: URL) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            if !AirDrop(items: [url]) {
+                shareError = String(localized: "Could not open the share sheet. The backup file was created — please try exporting again.")
+            }
+        }
+    }
 
     var body: some View {
         Form {
@@ -83,6 +93,16 @@ struct AccountDetailView: View {
                 }
             }
             Section {
+                Button {
+                    if let id = account?.id { exportMode = .exportSingle(id) }
+                } label: {
+                    Label("Export This Account", systemImage: "square.and.arrow.up")
+                }
+                .disabled(account == nil)
+            } footer: {
+                Text("Export this account (with its device identifier) as an encrypted file you can import on another device without signing in again.")
+            }
+            Section {
                 Button("Delete") {
                     vm.delete(id: account?.id ?? "")
                     dismiss()
@@ -92,5 +112,16 @@ struct AccountDetailView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Account Details")
+        .sheet(item: $exportMode) { mode in
+            AccountPortabilitySheet(mode: mode, onExportFile: { shareBackupFile($0) })
+        }
+        .alert("Error", isPresented: Binding(
+            get: { shareError != nil },
+            set: { if !$0 { shareError = nil } },
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(shareError ?? "")
+        }
     }
 }

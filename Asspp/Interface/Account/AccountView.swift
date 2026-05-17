@@ -7,12 +7,90 @@
 
 import ApplePackage
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct AccountView: View {
     @State private var vm = AppStore.this
     @State private var addAccount = false
     @State private var selectedID: AppStore.UserAccount.ID?
     @State private var navigationPath = NavigationPath()
+
+    @State private var portabilityMode: AccountPortabilityMode?
+    @State private var showImporter = false
+    @State private var importError: String?
+
+    @ViewBuilder
+    private var portabilityMenu: some View {
+        Menu {
+            Button {
+                portabilityMode = .exportAll
+            } label: {
+                Label("Export All Accounts", systemImage: "square.and.arrow.up")
+            }
+            .disabled(vm.accounts.isEmpty)
+
+            Button {
+                showImporter = true
+            } label: {
+                Label("Import Accounts", systemImage: "square.and.arrow.down")
+            }
+        } label: {
+            Label("Backup", systemImage: "ellipsis.circle")
+        }
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case let .success(urls):
+            guard let url = urls.first else {
+                importError = String(localized: "No file was selected.")
+                return
+            }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                portabilityMode = .importData(data)
+            } catch {
+                importError = error.localizedDescription
+            }
+        case let .failure(error):
+            importError = error.localizedDescription
+        }
+    }
+
+    private func shareBackupFile(_ url: URL) {
+        // Present after the sheet has fully dismissed so the activity
+        // controller attaches to this view, not the disappearing sheet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            if !AirDrop(items: [url]) {
+                importError = String(localized: "Could not open the share sheet. The backup file was created — please try exporting again.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func portabilityModifiers(_ content: some View) -> some View {
+        content
+            .sheet(item: $portabilityMode) { mode in
+                AccountPortabilitySheet(mode: mode, onExportFile: { shareBackupFile($0) })
+            }
+            .fileImporter(
+                isPresented: $showImporter,
+                allowedContentTypes: [.json],
+                allowsMultipleSelection: false,
+            ) { result in
+                handleImport(result)
+            }
+            .alert("Error", isPresented: Binding(
+                get: { importError != nil },
+                set: { if !$0 { importError = nil } },
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(importError ?? "")
+            }
+    }
 
     var body: some View {
         #if os(macOS)
@@ -24,17 +102,19 @@ struct AccountView: View {
 
     #if os(macOS)
         private var macOSBody: some View {
-            NavigationStack(path: $navigationPath) {
-                accountsTable
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .navigationTitle("Accounts")
-                    .toolbar { macToolbar }
-            }
-            .sheet(isPresented: $addAccount) {
-                AddAccountView()
-                    .frame(minWidth: 480, idealWidth: 520, minHeight: 340, idealHeight: 380)
-            }
-            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+            portabilityModifiers(
+                NavigationStack(path: $navigationPath) {
+                    accountsTable
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .navigationTitle("Accounts")
+                        .toolbar { macToolbar }
+                }
+                .sheet(isPresented: $addAccount) {
+                    AddAccountView()
+                        .frame(minWidth: 480, idealWidth: 520, minHeight: 340, idealHeight: 380)
+                }
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar),
+            )
         }
 
         private var accountsTable: some View {
@@ -113,11 +193,18 @@ struct AccountView: View {
                     Label("Add Account", systemImage: "plus")
                 }
             }
+            ToolbarItem(placement: .automatic) {
+                portabilityMenu
+            }
         }
     #endif
 
     #if !os(macOS)
         private var iOSBody: some View {
+            portabilityModifiers(iOSContent)
+        }
+
+        private var iOSContent: some View {
             NavigationStack(path: $navigationPath) {
                 Group {
                     if vm.accounts.isEmpty {
@@ -159,12 +246,15 @@ struct AccountView: View {
                 }
                 .navigationTitle("Accounts")
                 .toolbar {
-                    ToolbarItem {
+                    ToolbarItem(placement: .primaryAction) {
                         Button {
                             addAccount.toggle()
                         } label: {
                             Label("Add Account", systemImage: "plus")
                         }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        portabilityMenu
                     }
                 }
             }

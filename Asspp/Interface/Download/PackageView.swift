@@ -29,6 +29,7 @@ struct PackageView: View {
     #if os(iOS)
         @State private var installer: Installer?
         @State private var error: String = ""
+        @State private var exportingIPA = false
     #endif
     #if os(macOS)
         @State private var copied = false
@@ -92,11 +93,36 @@ struct PackageView: View {
                             try? FileManager.default.copyItem(at: url, to: newUrl)
                             AirDrop(items: [newUrl])
                         }
+
+                        Button {
+                            guard !exportingIPA else { return }
+                            exportingIPA = true
+                            error = ""
+                            let newUrl = temporaryDirectory
+                                .appendingPathComponent("\(archive.software.bundleID)-\(archive.software.version)")
+                                .appendingPathExtension("ipa")
+                            do {
+                                try? FileManager.default.removeItem(at: newUrl)
+                                try FileManager.default.copyItem(at: url, to: newUrl)
+                                if !AirDrop(items: [newUrl]) {
+                                    error = String(localized: "Could not open the share sheet. Please try again.")
+                                }
+                            } catch {
+                                self.error = error.localizedDescription
+                            }
+                            exportingIPA = false
+                        } label: {
+                            HStack {
+                                if exportingIPA { ProgressView().controlSize(.small) }
+                                Label("Export IPA to Files", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        .disabled(exportingIPA)
                     } header: {
                         Text("Control")
                     } footer: {
                         if error.isEmpty {
-                            Text("Direct install may have limitations that cannot be bypassed. Use AirDrop if possible on another device.")
+                            Text("Direct install may have limitations that cannot be bypassed. Use AirDrop if possible on another device. \"Export IPA to Files\" opens the share sheet — choose \"Save to Files\" to store the .ipa in iCloud Drive or On My iPhone.")
                         } else {
                             Text(error)
                                 .foregroundStyle(.red)
